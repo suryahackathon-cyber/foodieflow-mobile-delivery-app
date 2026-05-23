@@ -1,0 +1,115 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15-alpine
+    restart: always
+    environment:
+      POSTGRES_DB: foodieflow_db
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d foodieflow_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    restart: always
+    environment:
+      DATABASE_URL: postgresql://user:password@db:5432/foodieflow_db
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      SECRET_KEY: super-secret-dev-key
+      DEBUG: 'True'
+      APP_ENV: development
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    command: sh -c "python manage.py migrate && python manage.py runserver 0.0.0.0:8000"
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    restart: always
+    environment:
+      DATABASE_URL: postgresql://user:password@db:5432/foodieflow_db
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      SECRET_KEY: super-secret-dev-key
+      DEBUG: 'True'
+      APP_ENV: development
+    volumes:
+      - ./backend:/app
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    command: celery -A foodieflow_backend worker -l info
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    restart: always
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      NODE_ENV: development
+      REACT_APP_API_BASE_URL: https://8000-cs-efc09588-b0d2-4105-8e46-481a05e7191c.cs-asia-southeast1-seal.cloudshell.dev/api
+    depends_on:
+      - backend
+    command: npm start
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Optional: Nginx for reverse proxy/static files in a more production-like setup
+  # For local development, often services are accessed directly.
+  # This example assumes direct access for simplicity, but Nginx would be here.
+  # nginx:
+  #   image: nginx:alpine
+  #   restart: always
+  #   ports:
+  #     - "80:80"
+  #   volumes:
+  #     - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+  #     - ./backend/static:/app/static # If Django serves static files through Nginx
+  #     - ./backend/media:/app/media   # If Django serves media files through Nginx
+  #   depends_on:
+  #     - backend
+  #     - frontend
+
+volumes:
+  db_data:
+  redis_data:
